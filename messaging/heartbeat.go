@@ -44,6 +44,9 @@ func NewHeartbeatRunner(cfg config.HeartbeatConfig, client *ilink.Client, target
 		if err != nil {
 			return nil, fmt.Errorf("invalid heartbeat interval %q: %w", cfg.Interval, err)
 		}
+		if d <= 0 {
+			return nil, fmt.Errorf("heartbeat interval must be positive, got %v", d)
+		}
 		interval = d
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fastclaw-ai/weclaw/agent"
@@ -21,6 +22,7 @@ type CronScheduler struct {
 	targetUser string // user ID to send cron results to
 	getAgent   func(name string) agent.Agent
 	cronParser cron.Parser
+	running    sync.Map // job ID -> struct{}, tracks in-flight jobs
 }
 
 // NewCronScheduler creates a scheduler.
@@ -80,7 +82,23 @@ func (s *CronScheduler) tick(ctx context.Context) {
 		if job.State.NextRunAt.IsZero() || now.Before(job.State.NextRunAt) {
 			continue
 		}
-		go s.executeJob(ctx, job)
+		// Skip if this job is already running
+		if _, loaded := s.running.LoadOrStore(job.ID, struct{}{}); loaded {
+			continue
+		}
+		// Advance NextRunAt immediately to prevent re-dispatch on next tick
+		state := job.State
+		next, err := s.computeNextRun(job.Schedule, now)
+		if err == nil {
+			state.NextRunAt = next
+		} else {
+			state.NextRunAt = now.Add(cronTickInterval * 2)
+		}
+		s.store.UpdateState(job.ID, state)
+		go func(j CronJob) {
+			defer s.running.Delete(j.ID)
+			s.executeJob(ctx, j)
+		}(job)
 	}
 }
 
@@ -94,7 +112,12 @@ func (s *CronScheduler) executeJob(ctx context.Context, job CronJob) {
 
 	ag := s.getAgent(job.Agent)
 	if ag == nil {
-		s.recordResult(job, "error", "no agent available")
+		log.Printf("[cron] no agent available for job %q, will retry", job.Name)
+		// Reschedule for next tick instead of recording an error,
+		// so one-shot (DeleteAfter) jobs are not permanently lost.
+		state := job.State
+		state.NextRunAt = time.Now().Add(cronTickInterval)
+		s.store.UpdateState(job.ID, state)
 		return
 	}
 

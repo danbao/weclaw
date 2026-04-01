@@ -370,7 +370,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ilink.Client, msg i
 			_ = SendTextReply(ctx, client, msg.FromUserID, "Cron is not configured.", msg.ContextToken, clientID)
 			return
 		}
-		reply := HandleCronCommand(h.cronStore, trimmed)
+		reply := HandleCronCommand(h.cronStore, trimmed, msg.FromUserID)
 		if err := SendTextReply(ctx, client, msg.FromUserID, reply, msg.ContextToken, clientID); err != nil {
 			log.Printf("[handler] failed to send cron reply to %s: %v", msg.FromUserID, err)
 		}
